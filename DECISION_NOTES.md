@@ -105,3 +105,57 @@ The training pipeline described above is now implemented — see the main
 state. The hardware decision boundary in §7 is still **unresolved**: no
 camera has been selected or wired to the P4 yet, so nothing here has been
 integrated into the firmware repo.
+
+## 8. Export-time LSTM graph-explosion bug (found and fixed)
+
+A real device-integration audit against the trained `turkish_line_ocr_int8.tflite`
+found that the exported graph had 2,308 ops instead of the low dozens
+expected for this architecture — not a size problem (the file was a
+reasonable 1.45MB, peak activation RAM ~320KB) but a per-op interpreter
+overhead problem: TFLite Micro pays a fixed cost per op, and 2,308 of them
+would make inference either very slow or the firmware image too large to
+build comfortably.
+
+**Root cause:** `scripts/train.py`'s two `Bidirectional(LSTM(...))` layers
+were built with `unroll=True`. That flag tells Keras to statically unroll
+the recurrent loop into individual dense ops at graph-build time (useful
+for training-time XLA fusion on GPU), which leaves the TFLite converter
+with no cell-level structure to recognize and fuse — it exports each of
+the 40 timesteps × 2 layers × 2 directions worth of gate math
+(ADD/MUL/LOGISTIC/TANH/FULLY_CONNECTED/SPLIT) as separate ops.
+
+**Fix (both changes required together — either alone still fails):**
+
+1. `unroll=False` (the default) on both LSTM layers in `recognition_body()`
+   (`scripts/train.py`).
+2. `scripts/export_tflite.py` no longer converts `turkish_line_ocr.keras`
+   directly. It rebuilds the recognition graph on a **statically-shaped**
+   `batch_shape=(1, IMAGE_HEIGHT, IMAGE_WIDTH, 1)` input via the same
+   `recognition_body()` function, copies the trained weights across with
+   `set_weights()`, and converts *that* model. This second step is not
+   optional: with `unroll=False` alone, on the original flexible-batch
+   (`None, ...`) input, the converter fails outright —
+   `'tf.TensorListReserve' op requires element_shape to be static during
+   TF Lite transformation pass` — because the LSTM's internal
+   `TensorList` ops need every shape in the graph, including the batch
+   dimension, to be static before they can be lowered. Batch size 1
+   matches how the device actually calls the model (one cropped line at
+   a time), so nothing is lost by fixing it.
+
+**Verified end-to-end** (fake/random weights, since this only tests the
+export path's correctness, not trained accuracy — a real retrain is still
+needed to produce a usable model): op count dropped from 2,308 to **28**
+(4 of them genuine fused `UNIDIRECTIONAL_SEQUENCE_LSTM` ops, one per
+direction per layer, plus `REVERSE_V2` for the backward direction), file
+size dropped from 1.45MB to **641KB**, weight transfer confirmed exact,
+input/output tensor shapes unchanged (`1×32×160×1` → `1×40×90`), and peak
+activation RAM stayed ~320KB (expected — the actual per-timestep
+computation is identical, only its graph *representation* shrank).
+
+**Consequence: the existing `artifacts/turkish_line_ocr.keras` and
+`artifacts/turkish_line_ocr_int8.tflite` were trained/exported before this
+fix and still have the 2,308-op graph baked in.** A full retrain is
+required — this is a code fix, not a re-export; the saved `.keras` file's
+graph already has `unroll=True` compiled into its structure. Re-run
+`scripts/train.py` end-to-end once real training data is available, then
+`scripts/export_tflite.py`.
