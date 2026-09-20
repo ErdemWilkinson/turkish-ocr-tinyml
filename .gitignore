@@ -1,0 +1,20 @@
+# Training data: large, regenerable (synthetic) or personal (photos of
+# handwritten/printed samples) -- never pushed. See README.md for how to
+# regenerate the synthetic set and where to source real-photo data.
+# data/wordlists/ is the one exception -- it's a small (~700KB) input
+# corpus generate_synthetic.py reads from, not a training output.
+data/*
+!data/wordlists/
+eğitim verisi/
+
+# Trained model artifacts: regenerate with scripts/train.py + export_tflite.py
+# + make_representative.py. alphabet.json is the one exception -- it's a
+# small, hand-decided config (the character set), not a training output,
+# and scripts/train.py expects to find it, so it's tracked below.
+artifacts/*
+!artifacts/alphabet.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
