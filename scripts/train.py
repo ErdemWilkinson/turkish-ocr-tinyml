@@ -83,12 +83,24 @@ def make_arrays(rows: list[dict[str, str]]) -> tuple[np.ndarray, np.ndarray, np.
 L2 = tf.keras.regularizers.l2(1e-4)
 
 
-def build_models() -> tuple[tf.keras.Model, tf.keras.Model]:
-    image_input = tf.keras.Input((IMAGE_HEIGHT, IMAGE_WIDTH, 1), name="image")
-    labels_input = tf.keras.Input((MAX_TEXT_LENGTH,), dtype="int32", name="labels")
-    input_length = tf.keras.Input((1,), dtype="int32", name="input_length")
-    label_length = tf.keras.Input((1,), dtype="int32", name="label_length")
+def recognition_body(image_input: tf.Tensor) -> tf.Tensor:
+    """The conv+BiLSTM+softmax stack shared by the training and recognition
+    graphs. Pulled out into its own function (rather than inlined in
+    build_models()) so export_tflite.py can rebuild an identical graph on a
+    statically-shaped input and copy the trained weights across -- see that
+    file's comment for why a second, static-shape build is required rather
+    than exporting the model this function's caller already has.
 
+    unroll=False (the default) is required on both LSTM layers, not just
+    for speed: with unroll=True the TFLite converter has no recurrent-cell
+    structure left to recognize at export time, so it flattens each LSTM
+    into its constituent gate ops (ADD/MUL/LOGISTIC/TANH/FULLY_CONNECTED/
+    SPLIT) repeated once per timestep -- 2 stacked BiLSTMs over
+    TIME_STEPS=40 steps measured out to 2,308 ops in the exported int8
+    .tflite, versus 28 total (4 of them fused UNIDIRECTIONAL_SEQUENCE_LSTM
+    ops) once the converter can fuse each direction of each layer. See
+    DECISION_NOTES.md.
+    """
     x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu", kernel_regularizer=L2)(image_input)
     x = tf.keras.layers.BatchNormalization()(x)
     x = tf.keras.layers.MaxPooling2D((2, 2))(x)  # 16 x 80
@@ -112,16 +124,25 @@ def build_models() -> tuple[tf.keras.Model, tf.keras.Model]:
     x = tf.keras.layers.Dense(128, activation="relu", kernel_regularizer=L2)(x)
     x = tf.keras.layers.Dropout(0.3)(x)
     x = tf.keras.layers.Bidirectional(
-        tf.keras.layers.LSTM(96, return_sequences=True, unroll=True,
+        tf.keras.layers.LSTM(96, return_sequences=True, unroll=False,
                               kernel_regularizer=L2, recurrent_dropout=0.0)
     )(x)
     x = tf.keras.layers.Dropout(0.35)(x)
     x = tf.keras.layers.Bidirectional(
-        tf.keras.layers.LSTM(96, return_sequences=True, unroll=True,
+        tf.keras.layers.LSTM(96, return_sequences=True, unroll=False,
                               kernel_regularizer=L2, recurrent_dropout=0.0)
     )(x)
     x = tf.keras.layers.Dropout(0.35)(x)
-    logits = tf.keras.layers.Dense(NUM_CLASSES, activation="softmax", name="characters")(x)
+    return tf.keras.layers.Dense(NUM_CLASSES, activation="softmax", name="characters")(x)
+
+
+def build_models() -> tuple[tf.keras.Model, tf.keras.Model]:
+    image_input = tf.keras.Input((IMAGE_HEIGHT, IMAGE_WIDTH, 1), name="image")
+    labels_input = tf.keras.Input((MAX_TEXT_LENGTH,), dtype="int32", name="labels")
+    input_length = tf.keras.Input((1,), dtype="int32", name="input_length")
+    label_length = tf.keras.Input((1,), dtype="int32", name="label_length")
+
+    logits = recognition_body(image_input)
 
     def ctc_loss(arguments: list[tf.Tensor]) -> tf.Tensor:
         predictions, labels, prediction_lengths, text_lengths = arguments
