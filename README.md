@@ -164,6 +164,29 @@ source/font/background-independent held-out set:
 `scripts/evaluate.py` reports CER and exact-line accuracy against the same
 group-based held-out split `train.py` used.
 
+### Current measured results (2026-09-20, `data/labels.csv`, 3681 held-out samples)
+
+```
+python scripts/evaluate.py --labels labels.csv
+```
+
+- Character error rate: **13.09%** (target: ≤ 5%)
+- Exact-line accuracy: **57.35%** (target: ≥ 80%)
+
+**Not yet at the acceptance bar, but not unusable either.** Most errors in
+the sample predictions are small — a dropped trailing word/character or a
+digit substitution (`"akl'ma buraday'm yapmas'"` → `"akl'ma buraday' 2"`),
+not wholesale garbage. This reads as an undertrained/underfit baseline
+(more epochs, more synthetic data variety, or real-photo fine-tuning are
+the obvious next levers) rather than an architecture that doesn't work at
+all — contrast this with `voice/`'s CTC baseline (Round 17 in
+`KNOWN_ISSUES.md`), which produces character soup, not near-misses. This
+number has not been re-measured against a real device-representative test
+set (only the training pipeline's own synthetic held-out split, generated
+by the same process as the training data — see `DECISION_NOTES.md` for
+why that's a weaker signal than font/background/source-independent data
+would be).
+
 ## Hardware integration status
 
 This pipeline was deliberately built **before** committing to firmware
