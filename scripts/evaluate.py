@@ -53,6 +53,8 @@ def main() -> None:
     parser.add_argument("--artifacts", default=str(ROOT / "artifacts"))
     parser.add_argument("--labels", action="append", required=True,
                          help="labels.csv path(s) relative to ocr/data; repeatable")
+    parser.add_argument("--full", action="store_true",
+                         help="Evaluate on every row instead of holding out a validation split.")
     args = parser.parse_args()
 
     artifacts = Path(args.artifacts)
@@ -71,13 +73,16 @@ def main() -> None:
     if not rows:
         raise SystemExit("No evaluation rows found.")
 
-    groups = np.array([f"{row['_base']}::{row['group']}" for row in rows])
-    if len(np.unique(groups)) >= 2:
-        _, validation_idx = next(
-            GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42).split(rows, groups=groups)
-        )
-    else:
+    if args.full:
         validation_idx = np.arange(len(rows))
+    else:
+        groups = np.array([f"{row['_base']}::{row['group']}" for row in rows])
+        if len(np.unique(groups)) >= 2:
+            _, validation_idx = next(
+                GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42).split(rows, groups=groups)
+            )
+        else:
+            validation_idx = np.arange(len(rows))
 
     model = tf.keras.models.load_model(artifacts / "turkish_line_ocr.keras")
 
