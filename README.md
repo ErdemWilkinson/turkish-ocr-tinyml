@@ -117,10 +117,16 @@ committed pre-built):
    pages (not tracked in this repo — keep them locally, e.g. in a personal
    `eğitim verisi/`-style folder outside version control) and crops them
    into individual line images plus a preliminary transcription pass under
-   `data/real_lines/`, merged into `labels.csv` as `real_lines/...` rows.
+   `data/real_lines/`, writing a **separate** manifest,
+   `data/real_labels.csv` — it does **not** merge into `labels.csv`
+   automatically. To actually train on both, point `train.py` at both
+   manifests via `OCR_LABELS_CSV` (see "Training pipeline" below); running
+   `prepare_real_lines.py` alone, without also setting that variable, does
+   not add real photos to a plain `python scripts/train.py` run.
    `train.py`'s representative-sample logic specifically balances real vs.
    synthetic samples (`row["image"].startswith("real_lines/")`) so the
-   int8 calibration set isn't all-synthetic.
+   int8 calibration set isn't all-synthetic — but only once
+   `OCR_LABELS_CSV` actually includes `real_labels.csv`.
 
 ## Training pipeline
 
@@ -131,9 +137,16 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements-train.txt
 
-python scripts\generate_synthetic.py     # builds the synthetic split
-python scripts\prepare_real_lines.py     # optional: only if you have real photos locally
-python scripts\train.py                  # trains, writes artifacts/turkish_line_ocr.keras
+python scripts\generate_synthetic.py     # builds the synthetic split, writes data\labels.csv
+python scripts\prepare_real_lines.py     # optional: only if you have real photos locally, writes data\real_labels.csv (SEPARATE from labels.csv)
+
+# Synthetic only (the default -- prepare_real_lines.py's output is ignored unless OCR_LABELS_CSV is set):
+python scripts\train.py
+
+# Synthetic + real merged (only way to actually train on both; PowerShell uses ; as the separator):
+$env:OCR_LABELS_CSV = "data\labels.csv;data\real_labels.csv"
+python scripts\train.py
+
 python scripts\evaluate.py               # reports CER + exact-line accuracy
 python scripts\make_representative.py    # rebuilds the int8 calibration sample set
 python scripts\export_tflite.py          # writes artifacts/turkish_line_ocr_int8.tflite
@@ -194,8 +207,9 @@ integration, because on-device OCR has a hardware dependency this repo
 alone can't resolve: **the current makeshift-flipper firmware has no
 camera driver, camera pin assignment, frame buffer, or TinyML runtime
 integration at all.** The device's only current image-adjacent hardware is
-a 128x64 SSD1306 OLED, which is an output-only display and cannot supply
-an image to this model.
+a 240x240 ST7789 SPI LCD (as of `KNOWN_ISSUES.md` Round 15 — an earlier
+128x64 SSD1306 OLED was used before that and no longer applies), which is
+an output-only display and cannot supply an image to this model.
 
 Before writing any firmware integration code, these need to be confirmed
 against the real board:
