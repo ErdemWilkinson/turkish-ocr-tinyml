@@ -80,7 +80,7 @@ def make_arrays(rows: list[dict[str, str]]) -> tuple[np.ndarray, np.ndarray, np.
     return images, labels, lengths, groups
 
 
-L2 = tf.keras.regularizers.l2(1e-4)
+L2 = tf.keras.regularizers.l2(2e-4)
 
 
 def recognition_body(image_input: tf.Tensor) -> tf.Tensor:
@@ -108,7 +108,7 @@ def recognition_body(image_input: tf.Tensor) -> tf.Tensor:
     x = tf.keras.layers.Conv2D(64, 3, padding="same", activation="relu", kernel_regularizer=L2)(x)
     x = tf.keras.layers.BatchNormalization()(x)
     x = tf.keras.layers.MaxPooling2D((2, 2))(x)  # 8 x 40
-    x = tf.keras.layers.SpatialDropout2D(0.1)(x)
+    x = tf.keras.layers.SpatialDropout2D(0.15)(x)
 
     x = tf.keras.layers.Conv2D(96, 3, padding="same", activation="relu", kernel_regularizer=L2)(x)
     x = tf.keras.layers.BatchNormalization()(x)
@@ -117,22 +117,22 @@ def recognition_body(image_input: tf.Tensor) -> tf.Tensor:
     x = tf.keras.layers.Conv2D(128, 3, padding="same", activation="relu", kernel_regularizer=L2)(x)
     x = tf.keras.layers.BatchNormalization()(x)
     x = tf.keras.layers.MaxPooling2D((2, 1))(x)  # 2 x 40
-    x = tf.keras.layers.SpatialDropout2D(0.15)(x)
+    x = tf.keras.layers.SpatialDropout2D(0.2)(x)
 
     x = tf.keras.layers.Permute((2, 1, 3))(x)  # width, height, channels
     x = tf.keras.layers.Reshape((TIME_STEPS, 2 * 128))(x)
     x = tf.keras.layers.Dense(128, activation="relu", kernel_regularizer=L2)(x)
-    x = tf.keras.layers.Dropout(0.3)(x)
-    x = tf.keras.layers.Bidirectional(
-        tf.keras.layers.LSTM(96, return_sequences=True, unroll=False,
-                              kernel_regularizer=L2, recurrent_dropout=0.0)
-    )(x)
     x = tf.keras.layers.Dropout(0.35)(x)
     x = tf.keras.layers.Bidirectional(
         tf.keras.layers.LSTM(96, return_sequences=True, unroll=False,
                               kernel_regularizer=L2, recurrent_dropout=0.0)
     )(x)
-    x = tf.keras.layers.Dropout(0.35)(x)
+    x = tf.keras.layers.Dropout(0.4)(x)
+    x = tf.keras.layers.Bidirectional(
+        tf.keras.layers.LSTM(96, return_sequences=True, unroll=False,
+                              kernel_regularizer=L2, recurrent_dropout=0.0)
+    )(x)
+    x = tf.keras.layers.Dropout(0.4)(x)
     return tf.keras.layers.Dense(NUM_CLASSES, activation="softmax", name="characters")(x)
 
 
@@ -171,6 +171,7 @@ def main() -> None:
     rng = np.random.default_rng(42)
     shuffle_idx = rng.permutation(len(rows))
     images, labels, lengths, groups = images[shuffle_idx], labels[shuffle_idx], lengths[shuffle_idx], groups[shuffle_idx]
+    rows = [rows[index] for index in shuffle_idx]
 
     train_idx, validation_idx = next(
         GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42).split(images, groups=groups)
@@ -198,6 +199,16 @@ def main() -> None:
     )
 
     ARTIFACTS.mkdir(exist_ok=True)
+    split_manifest = {
+        "version": 1,
+        "validation": [
+            {"base": rows[index]["_base"], "image": rows[index]["image"], "text": rows[index]["text"], "group": rows[index]["group"]}
+            for index in validation_idx
+        ],
+    }
+    (ARTIFACTS / "split_manifest.json").write_text(
+        json.dumps(split_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     recognition_model.save(ARTIFACTS / "turkish_line_ocr.keras")
     (ARTIFACTS / "alphabet.json").write_text(
         json.dumps({"alphabet": ALPHABET, "blank_id": BLANK_ID}, ensure_ascii=False, indent=2),

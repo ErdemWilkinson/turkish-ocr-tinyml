@@ -1,7 +1,6 @@
 """Sanity-check the exported int8 TFLite model against a few validation samples."""
 from __future__ import annotations
 
-import csv
 import json
 from pathlib import Path
 
@@ -11,7 +10,6 @@ import tensorflow as tf
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / "artifacts"
 IMAGE_WIDTH, IMAGE_HEIGHT = 160, 32
-SAMPLE_COUNT = 40
 
 
 def load_image(path: Path) -> np.ndarray:
@@ -33,6 +31,17 @@ def greedy_ctc_decode(logits: np.ndarray, blank_id: int, id_to_char: dict[int, s
     return "".join(chars)
 
 
+def edit_distance(left: str, right: str) -> int:
+    previous = list(range(len(right) + 1))
+    for i, left_char in enumerate(left, 1):
+        current = [i]
+        for j, right_char in enumerate(right, 1):
+            current.append(min(current[-1] + 1, previous[j] + 1,
+                               previous[j - 1] + (left_char != right_char)))
+        previous = current
+    return previous[-1]
+
+
 def main() -> None:
     alphabet_info = json.loads((ARTIFACTS / "alphabet.json").read_text(encoding="utf-8"))
     blank_id = alphabet_info["blank_id"]
@@ -46,14 +55,16 @@ def main() -> None:
     in_scale, in_zero = input_detail["quantization"]
     out_scale, out_zero = output_detail["quantization"]
 
-    rows = []
-    with (ROOT / "data" / "real_labels.csv").open(encoding="utf-8", newline="") as handle:
-        rows.extend(csv.DictReader(handle))
-    rows = rows[:SAMPLE_COUNT]
+    split_path = ARTIFACTS / "split_manifest.json"
+    if not split_path.exists():
+        raise SystemExit("Missing split_manifest.json; retrain before evaluating the int8 model.")
+    rows = json.loads(split_path.read_text(encoding="utf-8")).get("validation", [])
+    if not rows:
+        raise SystemExit("Split manifest contains no validation samples.")
 
-    correct = 0
+    correct = total_edits = total_chars = 0
     for row in rows:
-        image = load_image(ROOT / "data" / row["image"])
+        image = load_image(Path(row["base"]) / row["image"])
         quantized = np.round(image / in_scale + in_zero).astype(input_detail["dtype"])[np.newaxis, ...]
         interpreter.set_tensor(input_detail["index"], quantized)
         interpreter.invoke()
@@ -62,10 +73,13 @@ def main() -> None:
         prediction = greedy_ctc_decode(dequantized, blank_id, id_to_char)
         match = prediction == row["text"]
         correct += int(match)
+        total_edits += edit_distance(row["text"], prediction)
+        total_chars += len(row["text"])
         marker = "OK " if match else "-- "
         print(f"{marker}{row['text']!r:30s} -> {prediction!r}")
 
-    print(f"\nint8 TFLite exact-match on {len(rows)} samples: {correct / len(rows):.3f}")
+    print(f"\nint8 TFLite held-out exact-match on {len(rows)} samples: {correct / len(rows):.3f}")
+    print(f"int8 TFLite held-out CER: {total_edits / max(total_chars, 1):.3f}")
 
 
 if __name__ == "__main__":
