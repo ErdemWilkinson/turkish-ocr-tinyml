@@ -5,6 +5,13 @@
 > device's actual hardware before this training pipeline existed). See
 > that repo's [README](https://github.com/ErdemWilkinson/makeshift-flipper)
 > for the current firmware/peripheral state.
+>
+> **Hardware has changed since this was written.** These notes describe the
+> original two-board design (ESP32-P4 main board + ESP32-C6 companion, SSD1306
+> OLED). The device is now a single ESP32-C6 and the P4 is no longer part of
+> the project, so every ESP32-P4 reference below is historical. The model
+> choice and training plan still stand; the target board is an open question
+> (see the README's "Hardware integration status").
 
 ## 1. Project understanding
 
@@ -102,9 +109,9 @@ Start with **a custom full-int8 CNN-CTC Turkish line OCR model**, not a general-
 
 The training pipeline described above is now implemented — see the main
 [README.md](README.md) for the current dataset/scripts/acceptance-target
-state. The hardware decision boundary in §7 is still **unresolved**: no
-camera has been selected or wired to the P4 yet, so nothing here has been
-integrated into the firmware repo.
+state. The hardware decision boundary in §7 is still **unresolved**: the
+ESP32-P4 is no longer part of the project, no target board or camera has
+been selected, and nothing here has been integrated into the firmware repo.
 
 ## 8. Export-time LSTM graph-explosion bug (found and fixed)
 

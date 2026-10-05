@@ -1,9 +1,10 @@
 # Turkish TinyML Line OCR
 
 A compact, full-int8 CNN-CTC recognizer for a single horizontal line of
-printed Turkish text, sized to eventually run on an embedded target (the
+printed Turkish text, sized to eventually run on a microcontroller-class
+embedded target. It started as part of the
 [makeshift-flipper](https://github.com/ErdemWilkinson/makeshift-flipper)
-ESP32-P4 device). This repository was split out of that firmware repo
+project and was split out of that firmware repo
 because it's a separate concern (Python/TensorFlow training pipeline vs.
 ESP-IDF C firmware) with its own, much larger dataset.
 
@@ -204,20 +205,25 @@ would be).
 
 This pipeline was deliberately built **before** committing to firmware
 integration, because on-device OCR has a hardware dependency this repo
-alone can't resolve: **the current makeshift-flipper firmware has no
+alone can't resolve. The makeshift-flipper is now a single ESP32-C6 (the
+earlier ESP32-P4 board is no longer part of the project), so there is
+currently **no chosen target board for this model**, and **the current
+makeshift-flipper firmware has no
 camera driver, camera pin assignment, frame buffer, or TinyML runtime
 integration at all.** The device's only current image-adjacent hardware is
 a 240x240 ST7789 SPI LCD (as of `KNOWN_ISSUES.md` Round 15 — an earlier
 128x64 SSD1306 OLED was used before that and no longer applies), which is
 an output-only display and cannot supply an image to this model.
 
-Before writing any firmware integration code, these need to be confirmed
-against the real board:
+Before writing any firmware integration code, these need to be decided and
+confirmed against a real board:
 
-- Exact ESP32-P4-Pico revision and installed PSRAM
+- Which board runs the model. The ESP32-C6 has no PSRAM and no camera
+  interface in the current build, and whether this model fits in its RAM
+  next to the existing firmware has not been measured
 - Camera module + sensor interface (DVP/MIPI) and actual free pin budget
 - Whether the camera can deliver grayscale or only RGB565 frames
-- Flash/PSRAM headroom left after the existing firmware links
+- Flash/RAM headroom left after the existing firmware links
 - Target embedded runtime for this ESP-IDF version: LiteRT/TFLite Micro vs.
   ESP-DL
 - The real use case this needs to serve: printed labels/cards vs. general
@@ -231,7 +237,7 @@ the *first* version (too much memory/latency/data for an unproven need).
 ## Related repositories
 
 - [makeshift-flipper](https://github.com/ErdemWilkinson/makeshift-flipper) —
-  the ESP32-P4/C6 firmware this model is ultimately meant to run on
+  the ESP32-C6 handheld firmware project this model was originally scoped for
 - [turkish-asr-whisper](https://github.com/ErdemWilkinson/turkish-asr-whisper) —
   the sibling TinyML pipeline (offline Turkish whisper-command recognition),
   split out for the same reason (separate concern, separate dataset)
