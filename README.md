@@ -235,3 +235,7 @@ the *first* version (too much memory/latency/data for an unproven need).
 - [turkish-asr-whisper](https://github.com/ErdemWilkinson/turkish-asr-whisper) —
   the sibling TinyML pipeline (offline Turkish whisper-command recognition),
   split out for the same reason (separate concern, separate dataset)
+
+## License
+
+Code in this repository is released under the [MIT License](LICENSE). The word-frequency list in `data/wordlists/` is third-party data and keeps its original license.
