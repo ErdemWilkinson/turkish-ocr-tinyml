@@ -160,6 +160,16 @@ different manifest/output location without editing the script:
 useful for combining datasets) and `OCR_ARTIFACTS` (output directory,
 defaults to `artifacts/`).
 
+Three more optional variables control a continuation run:
+
+- `OCR_WARM_START`: path to an existing `turkish_line_ocr.keras`; training
+  continues from its weights instead of starting from random ones. Point it
+  at a copy outside `OCR_ARTIFACTS`, since the run overwrites the model there.
+- `OCR_LR`: initial learning rate (default `1e-3`; a continuation run
+  usually wants something lower, e.g. `3e-4`).
+- `OCR_MAX_MINUTES`: time budget for the fit. Training stops before an epoch
+  that would not fit and saves the weights of the best-`val_loss` epoch.
+
 Training uses `Adam(1e-3)` with gradient clipping, early stopping on
 validation loss (patience 6), and LR reduction on plateau — up to 150
 epochs, whichever early-stopping hits first.
@@ -200,6 +210,28 @@ set (only the training pipeline's own synthetic held-out split, generated
 by the same process as the training data — see `DECISION_NOTES.md` for
 why that's a weaker signal than font/background/source-independent data
 would be).
+
+### Continuation run (2026-10-08, 3234 held-out samples from `split_manifest.json`)
+
+The 2026-09-21 model was trained for another 23 epochs (`OCR_WARM_START`,
+`OCR_LR=3e-4`, `OCR_MAX_MINUTES=54`) on `labels.csv` + `real_labels.csv` +
+`zenodo_labels.csv`, with the same group split. Both models were scored on
+that split's held-out rows:
+
+| Model | CER | Exact-line accuracy |
+|---|---:|---:|
+| Float, before (2026-09-21) | 13.03% | 57.08% |
+| Float, after (2026-10-08) | 12.69% | 58.50% |
+| int8 TFLite, before | 19.4% | 8.2% |
+| int8 TFLite, after | 19.5% | 8.7% |
+
+On the 66 real lines in `test_labels.csv` the two float models are
+indistinguishable (CER 53.5% before, 55.1% after; 8 vs. 9 exact lines).
+
+A small gain, still short of the acceptance bar. The int8 model loses most
+of its exact-line accuracy relative to the float model in both versions, so
+quantization, not training time, is the larger open problem: sample
+predictions mostly drop trailing characters (`'kaptan 01'` -> `'kaptan 0'`).
 
 ## Hardware integration status
 

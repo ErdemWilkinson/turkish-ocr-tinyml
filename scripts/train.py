@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import time
 from pathlib import Path
 
 import numpy as np
@@ -156,10 +157,34 @@ def build_models() -> tuple[tf.keras.Model, tf.keras.Model]:
     )
     recognition_model = tf.keras.Model(image_input, logits)
     training_model.compile(
-        optimizer=tf.keras.optimizers.Adam(1e-3, clipnorm=5.0),
+        optimizer=tf.keras.optimizers.Adam(float(os.environ.get("OCR_LR", 1e-3)), clipnorm=5.0),
         loss=lambda _, value: value,
     )
     return training_model, recognition_model
+
+
+class TimeBudget(tf.keras.callbacks.Callback):
+    """Stop once another epoch would not fit in OCR_MAX_MINUTES, keeping the
+    best-val_loss weights (EarlyStopping only restores them when *it* stops)."""
+
+    def __init__(self, minutes: float):
+        super().__init__()
+        self.seconds = minutes * 60.0
+
+    def on_train_begin(self, logs=None):
+        self.started = time.monotonic()
+        self.best_loss, self.best_weights = float("inf"), None
+
+    def on_epoch_end(self, epoch, logs=None):
+        val_loss = (logs or {}).get("val_loss", float("inf"))
+        if val_loss < self.best_loss:
+            self.best_loss, self.best_weights = val_loss, self.model.get_weights()
+        elapsed = time.monotonic() - self.started
+        if elapsed + elapsed / (epoch + 1) > self.seconds:
+            print(f"Time budget reached after epoch {epoch + 1}; restoring best val_loss {self.best_loss:.4f}.")
+            self.model.stop_training = True
+            if self.best_weights is not None:
+                self.model.set_weights(self.best_weights)
 
 
 def main() -> None:
@@ -184,6 +209,13 @@ def main() -> None:
     print(f"Train samples: {len(train_idx)}, validation samples: {len(validation_idx)}")
 
     training_model, recognition_model = build_models()
+    warm_start = os.environ.get("OCR_WARM_START")
+    if warm_start:
+        # Continue training an existing recognizer instead of starting from random weights.
+        recognition_model.set_weights(tf.keras.models.load_model(warm_start).get_weights())
+        print(f"Warm start from {warm_start}")
+    max_minutes = os.environ.get("OCR_MAX_MINUTES")
+    budget_callbacks = [TimeBudget(float(max_minutes))] if max_minutes else []
     training_model.fit(
         train_inputs,
         np.zeros((len(train_idx), 1), dtype=np.float32),
@@ -194,6 +226,7 @@ def main() -> None:
         callbacks=[
             tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True),
             tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=4, min_lr=1e-5),
+            *budget_callbacks,
         ],
         verbose=2,
     )
