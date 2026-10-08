@@ -225,13 +225,50 @@ that split's held-out rows:
 | int8 TFLite, before | 19.4% | 8.2% |
 | int8 TFLite, after | 19.5% | 8.7% |
 
-On the 66 real lines in `test_labels.csv` the two float models are
-indistinguishable (CER 53.5% before, 55.1% after; 8 vs. 9 exact lines).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/ocr-before-after-dark.svg">
+  <img alt="Exact-line accuracy and character error rate of the float and int8 models, before and after the continuation run" src="docs/ocr-before-after-light.svg">
+</picture>
 
 A small gain, still short of the acceptance bar. The int8 model loses most
 of its exact-line accuracy relative to the float model in both versions, so
 quantization, not training time, is the larger open problem: sample
 predictions mostly drop trailing characters (`'kaptan 01'` -> `'kaptan 0'`).
+
+#### By data source (float model)
+
+The first three rows split the 3234 held-out samples by where the line came
+from. The last row is `test_labels.csv`, 66 real lines that no training run
+has used.
+
+| Source | Samples | CER before | CER after | Exact-line before | Exact-line after |
+|---|---:|---:|---:|---:|---:|
+| Synthetic (`lines/`) | 3004 | 13.22% | 12.88% | 55.49% | 56.82% |
+| Real photos (`real_lines/`) | 30 | 28.11% | 28.11% | 30.00% | 33.33% |
+| Zenodo (`zenodo_lines/`) | 200 | 3.79% | 3.45% | 85.00% | 87.50% |
+| Separate test (`test_labels.csv`) | 66 | 53.54% | 55.06% | 12.12% | 13.64% |
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/ocr-by-source-dark.svg">
+  <img alt="Exact-line accuracy and character error rate by data source, before and after the continuation run" src="docs/ocr-by-source-light.svg">
+</picture>
+
+The two real-photo groups are small (30 and 66 lines), so their before/after
+difference is a single line and the two models are indistinguishable there.
+The model is good on clean printed Zenodo lines and weak on real photos.
+
+#### Training curve
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/ocr-training-curve-dark.svg">
+  <img alt="Training and validation loss over the 23 epochs of the continuation run" src="docs/ocr-training-curve-light.svg">
+</picture>
+
+Training loss fell steadily while validation loss moved inside a narrow
+band; the saved weights are from epoch 15 (validation loss 9.65, against
+9.74 for the model the run started from). The vertical lines mark where
+`ReduceLROnPlateau` halved the learning rate (3e-4 -> 1.5e-4 -> 7.5e-5). The
+loss axis does not start at zero.
 
 ## Hardware integration status
 
