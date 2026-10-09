@@ -300,6 +300,55 @@ band; the saved weights are from epoch 15 (validation loss 9.65, against
 `ReduceLROnPlateau` halved the learning rate (3e-4 -> 1.5e-4 -> 7.5e-5). The
 loss axis does not start at zero.
 
+### Adding real scene text (2026-10-09, TS-TR)
+
+The 2026-10-08 model was trained further with the 5,206 TS-TR training
+crops added (`OCR_WARM_START`, `OCR_FIXED_VALIDATION`, `OCR_LR=3e-4`,
+`OCR_MAX_MINUTES=180`): 21,521 training and 3,993 held-out samples. Early
+stopping ended the run after 47 epochs, about two hours in; the saved
+weights are from epoch 37.
+
+Float model, before and after, on data neither model was trained on:
+
+| Test set | Samples | CER before | CER after | Exact-line before | Exact-line after |
+|---|---:|---:|---:|---:|---:|
+| TS-TR official test split | 2078 | 82.53% | **24.17%** | 0.58% | **45.33%** |
+| Separate test (`test_labels.csv`) | 66 | 55.06% | 50.21% | 13.64% | 19.70% |
+| Earlier held-out rows (synthetic + real + Zenodo) | 3234 | 12.69% | 12.61% | 58.50% | 58.23% |
+| of which Zenodo | 200 | 3.45% | 1.61% | 87.50% | 91.00% |
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/ocr-tstr-before-after-dark.svg">
+  <img alt="Exact-line accuracy and character error rate by test set, before and after adding TS-TR" src="docs/ocr-tstr-before-after-light.svg">
+</picture>
+
+The model went from reading almost no real scene text to reading 45% of the
+TS-TR test crops exactly, without losing accuracy on the data it already
+handled. It is still short of the acceptance bar on every set except clean
+printed Zenodo lines.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/ocr-tstr-training-curve-dark.svg">
+  <img alt="Training and validation loss over the 47 epochs of the TS-TR run" src="docs/ocr-tstr-training-curve-light.svg">
+</picture>
+
+Validation loss reached its minimum (9.04) at epoch 37 and then stayed flat
+while training loss kept falling, through two learning-rate halvings (the
+vertical lines), so the remaining hour of the budget would only have
+overfit. The loss axis does not start at zero, and these losses are not
+comparable with the 2026-10-08 curve because the data now includes TS-TR.
+
+The int8 gap is unchanged. On the 3,993 held-out samples:
+
+| Model | CER before | CER after | Exact-line before | Exact-line after |
+|---|---:|---:|---:|---:|
+| Float | 18.12% | 13.64% | 47.38% | 55.67% |
+| int8 TFLite | 24.6% | 21.7% | 8.1% | 10.5% |
+
+Quantization remains the main blocker for on-device use. Models from this
+run are non-commercial because of TS-TR's license; see
+[MODEL_LICENSE.md](MODEL_LICENSE.md).
+
 ## Hardware integration status
 
 This pipeline was deliberately built **before** committing to firmware
