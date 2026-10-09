@@ -106,8 +106,8 @@ not just clean lines).
 
 ### Building the dataset
 
-Two sources feed `data/labels.csv`, and both are scripted (nothing here is
-committed pre-built):
+Four sources are scripted (nothing here is committed pre-built); only the
+first writes `data/labels.csv`, the others each write their own manifest:
 
 1. **Synthetic** (`scripts/generate_synthetic.py`): renders 18,000 lines
    from `data/wordlists/tr_50k.txt` using PIL, with randomized fonts,
@@ -128,6 +128,31 @@ committed pre-built):
    synthetic samples (`row["image"].startswith("real_lines/")`) so the
    int8 calibration set isn't all-synthetic — but only once
    `OCR_LABELS_CSV` actually includes `real_labels.csv`.
+
+3. **Zenodo** (`scripts/import_zenodo_dataset.py`): the printed subsets of
+   the Turkish OCR Text Image Dataset, written to `data/zenodo_lines/` and
+   `data/zenodo_labels.csv`.
+4. **TS-TR** (`scripts/import_tstr_dataset.py`): cropped real-world scene
+   text (signs, shop fronts, plates). Download and extract the Kaggle
+   archive, then run the importer with `--source <folder holding train.txt>`.
+   Its official train split becomes `data/tstr_labels.csv` (5,206 usable
+   crops); its official test split is kept apart as the evaluation-only
+   `data/tstr_test_labels.csv` (2,078 crops). Like the real-photo manifest,
+   neither is merged into `labels.csv` -- add them through `OCR_LABELS_CSV`.
+
+### Third-party data and licenses
+
+None of this data is redistributed in this repository; each source keeps
+its own license, and attribution is required where the license says so.
+
+| Dataset | Used for | License | Source |
+|---|---|---|---|
+| Turkish word-frequency list (`data/wordlists/tr_50k.txt`) | Text for synthetic lines | Original license of the list | Tracked in this repo |
+| Turkish OCR Text Image Dataset | Training (printed lines) | CC BY 4.0 | [Zenodo record 21923181](https://zenodo.org/records/21923181) |
+| Turkish Scene Text Recognition (TS-TR), Serdar Yıldız | Training and evaluation (real scene text) | **CC BY-NC 4.0** | [Kaggle](https://www.kaggle.com/datasets/serdaryildiz/turkish-scene-text-recognition-dataset), [MViT-TR repository](https://github.com/serdaryildiz/MViT-TR) |
+
+TS-TR is non-commercial. A model trained with it inherits that restriction;
+see [MODEL_LICENSE.md](MODEL_LICENSE.md).
 
 ## Training pipeline
 
@@ -169,6 +194,11 @@ Three more optional variables control a continuation run:
   usually wants something lower, e.g. `3e-4`).
 - `OCR_MAX_MINUTES`: time budget for the fit. Training stops before an epoch
   that would not fit and saves the weights of the best-`val_loss` epoch.
+- `OCR_FIXED_VALIDATION`: path to an earlier run's `split_manifest.json`.
+  That run's held-out rows stay held out, and only data sources it never
+  saw get a fresh 15% group split. Use it when a warm-started run adds a
+  dataset: re-drawing the split would move rows the model already trained
+  on into validation.
 
 Training uses `Adam(1e-3)` with gradient clipping, early stopping on
 validation loss (patience 6), and LR reduction on plateau — up to 150
@@ -314,3 +344,8 @@ the *first* version (too much memory/latency/data for an unproven need).
 ## License
 
 Code in this repository is released under the [MIT License](LICENSE). The word-frequency list in `data/wordlists/` is third-party data and keeps its original license.
+
+Trained model files are not covered by the MIT License. Models trained with
+non-commercial data are for non-commercial use only; see
+[MODEL_LICENSE.md](MODEL_LICENSE.md) and
+[Third-party data and licenses](#third-party-data-and-licenses).

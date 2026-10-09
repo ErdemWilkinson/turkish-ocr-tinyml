@@ -187,6 +187,29 @@ class TimeBudget(tf.keras.callbacks.Callback):
                 self.model.set_weights(self.best_weights)
 
 
+def split_indices(rows: list[dict[str, str]], groups: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Group-based 15% hold-out. With OCR_FIXED_VALIDATION pointing at an
+    earlier split_manifest.json, that run's held-out rows stay held out and
+    only data sources it never saw get a fresh group split. A warm-started
+    model has trained on the old training rows, so re-drawing the split after
+    adding a dataset would move some of them into validation and flatter it.
+    """
+    splitter = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42)
+    fixed = os.environ.get("OCR_FIXED_VALIDATION")
+    if not fixed:
+        return next(splitter.split(rows, groups=groups))
+    held_out = {row["image"] for row in json.loads(Path(fixed).read_text(encoding="utf-8"))["validation"]}
+    known_sources = {image.split("/")[0] for image in held_out}
+    is_validation = np.array([row["image"] in held_out for row in rows])
+    new_idx = np.flatnonzero([row["image"].split("/")[0] not in known_sources for row in rows])
+    kept = int(is_validation.sum())
+    if len(new_idx):
+        _, new_validation = next(splitter.split(new_idx, groups=groups[new_idx]))
+        is_validation[new_idx[new_validation]] = True
+    print(f"Fixed validation from {fixed}: {kept} kept, {int(is_validation.sum()) - kept} from new sources")
+    return np.flatnonzero(~is_validation), np.flatnonzero(is_validation)
+
+
 def main() -> None:
     rows = load_rows()
     images, labels, lengths, groups = make_arrays(rows)
@@ -198,9 +221,7 @@ def main() -> None:
     images, labels, lengths, groups = images[shuffle_idx], labels[shuffle_idx], lengths[shuffle_idx], groups[shuffle_idx]
     rows = [rows[index] for index in shuffle_idx]
 
-    train_idx, validation_idx = next(
-        GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42).split(images, groups=groups)
-    )
+    train_idx, validation_idx = split_indices(rows, groups)
     input_lengths = np.full((len(rows), 1), TIME_STEPS, dtype=np.int32)
     label_lengths = lengths[:, np.newaxis]
     train_inputs = [images[train_idx], labels[train_idx], input_lengths[train_idx], label_lengths[train_idx]]
