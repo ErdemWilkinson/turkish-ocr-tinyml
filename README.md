@@ -9,8 +9,58 @@ because it's a separate concern (Python/TensorFlow training pipeline vs.
 ESP-IDF C firmware) with its own, much larger dataset.
 
 **Status: training pipeline works end-to-end; not yet integrated into any
-firmware.** See [Hardware integration status](#hardware-integration-status)
-below for exactly what's blocking that and what's already decided.
+firmware.** The float model reads 45% of unseen real scene-text crops and
+58% of held-out synthetic/printed lines exactly; the int8 export still
+loses most of that accuracy. See [Hardware integration status](#hardware-integration-status)
+below for exactly what's blocking integration and what's already decided.
+
+## Where the model stands
+
+Three versions of the same model, each trained from the previous one's
+weights, scored on data none of them was trained on (last update:
+2026-10-09).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/ocr-progress-dark.svg">
+  <img alt="Exact-line accuracy and character error rate of the three model versions on four test sets" src="docs/ocr-progress-light.svg">
+</picture>
+
+Exact-line accuracy, float model:
+
+| Test set | Samples | 2026-09-21 | 2026-10-08 | 2026-10-09 | Target |
+|---|---:|---:|---:|---:|---:|
+| TS-TR official test split (real scene text) | 2078 | 0.53% | 0.58% | **45.33%** | ≥ 80% |
+| Separate test, `test_labels.csv` (real photos) | 66 | 12.12% | 13.64% | **19.70%** | ≥ 80% |
+| Held-out synthetic + real + Zenodo | 3234 | 57.08% | 58.50% | 58.23% | ≥ 80% |
+| of which Zenodo (clean print) | 200 | 85.00% | 87.50% | **91.00%** | ≥ 80% |
+
+Character error rate, float model:
+
+| Test set | Samples | 2026-09-21 | 2026-10-08 | 2026-10-09 | Target |
+|---|---:|---:|---:|---:|---:|
+| TS-TR official test split (real scene text) | 2078 | 82.86% | 82.53% | **24.17%** | ≤ 5% |
+| Separate test, `test_labels.csv` (real photos) | 66 | 53.54% | 55.06% | **50.21%** | ≤ 5% |
+| Held-out synthetic + real + Zenodo | 3234 | 13.03% | 12.69% | 12.61% | ≤ 5% |
+| of which Zenodo (clean print) | 200 | 3.79% | 3.45% | **1.61%** | ≤ 5% |
+
+What changed between versions:
+
+- **2026-09-21 -> 2026-10-08:** 23 more epochs on the same data. Almost no
+  effect; more training time alone was not the lever.
+- **2026-10-08 -> 2026-10-09:** 5,206 real scene-text crops (TS-TR) added.
+  The model learned a kind of text it could not read at all, without losing
+  accuracy elsewhere. Real-world data was the lever.
+
+What is still open:
+
+- **int8 quantization.** The exported int8 model reads 10.5% of the 3,993
+  held-out samples exactly, against 55.7% for the float model it was made
+  from. This gap predates all three versions and blocks on-device use.
+- **The acceptance bar.** Only clean printed Zenodo lines meet it.
+- **Small real-photo test.** The 66-line set moves by a few lines per
+  version; it is too small to rank models on its own.
+
+Details of each run are under [Results](#results).
 
 ## Why a custom model instead of an existing OCR package
 
@@ -52,20 +102,26 @@ ocr/
 ├── scripts/
 │   ├── generate_synthetic.py    # builds data/lines/synthetic/ + labels.csv rows
 │   ├── prepare_real_lines.py    # crops real document photos into labeled lines
+│   ├── import_zenodo_dataset.py # Zenodo printed lines -> data/zenodo_lines/
+│   ├── import_tstr_dataset.py   # TS-TR scene-text crops -> data/tstr_lines/
 │   ├── train.py                 # trains the CNN-CTC model, writes artifacts/
 │   ├── evaluate.py               # CER + exact-line accuracy on held-out groups
 │   ├── make_representative.py   # rebuilds the int8 calibration sample set
 │   ├── export_tflite.py         # float .keras -> full-int8 .tflite
-│   └── evaluate_tflite.py       # sanity-checks the exported .tflite
+│   ├── evaluate_tflite.py       # scores the exported .tflite on the held-out split
+│   └── gradio_demo.py           # local demo UI for trying the model on an image
 ├── data/
 │   ├── wordlists/tr_50k.txt      # tracked: small (~700KB) input corpus
-│   ├── lines/, real_lines/       # NOT tracked: generated/derived images
-│   └── labels.csv                # NOT tracked: dataset manifest (image,text,group)
+│   ├── lines/, real_lines/,      # NOT tracked: generated/derived/imported images
+│   │   zenodo_lines/, tstr_lines/
+│   └── *labels.csv               # NOT tracked: one manifest per source (image,text,group)
 ├── artifacts/
 │   ├── alphabet.json             # tracked: the character set, hand-decided
 │   └── *.keras, *.tflite, *.npy  # NOT tracked: trained model outputs
+├── docs/                         # tracked: result charts embedded in this README
 ├── DECISION_NOTES.md             # the model-selection writeup, moved here from
 │                                  # the firmware repo's OCR_TINYML_NOTES.md
+├── MODEL_LICENSE.md              # terms for trained models (separate from the MIT code license)
 └── requirements-train.txt
 ```
 
@@ -173,7 +229,12 @@ python scripts\train.py
 $env:OCR_LABELS_CSV = "data\labels.csv;data\real_labels.csv"
 python scripts\train.py
 
-python scripts\evaluate.py               # reports CER + exact-line accuracy
+# Everything, as used for the current model (after running the two import_* scripts):
+$env:OCR_LABELS_CSV = "data\labels.csv;data\real_labels.csv;data\zenodo_labels.csv;data\tstr_labels.csv"
+python scripts\train.py
+
+python scripts\evaluate.py --labels labels.csv                   # CER + exact-line accuracy on a held-out split
+python scripts\evaluate.py --labels tstr_test_labels.csv --full  # every row of an evaluation-only manifest
 python scripts\make_representative.py    # rebuilds the int8 calibration sample set
 python scripts\export_tflite.py          # writes artifacts/turkish_line_ocr_int8.tflite
 python scripts\evaluate_tflite.py        # sanity-checks the quantized model
@@ -185,7 +246,7 @@ different manifest/output location without editing the script:
 useful for combining datasets) and `OCR_ARTIFACTS` (output directory,
 defaults to `artifacts/`).
 
-Three more optional variables control a continuation run:
+Four more optional variables control a continuation run:
 
 - `OCR_WARM_START`: path to an existing `turkish_line_ocr.keras`; training
   continues from its weights instead of starting from random ones. Point it
@@ -201,8 +262,8 @@ Three more optional variables control a continuation run:
   on into validation.
 
 Training uses `Adam(1e-3)` with gradient clipping, early stopping on
-validation loss (patience 6), and LR reduction on plateau — up to 150
-epochs, whichever early-stopping hits first.
+validation loss (patience 10), and LR halving on plateau (patience 4) — up
+to 150 epochs, whichever early-stopping hits first.
 
 ## Acceptance targets
 
@@ -215,10 +276,16 @@ source/font/background-independent held-out set:
 - Model + tensor arena size measured on real target hardware, not guessed
 - First-pass latency target: ≤ 1 second per cropped line
 
-`scripts/evaluate.py` reports CER and exact-line accuracy against the same
-group-based held-out split `train.py` used.
+`scripts/evaluate.py` reports CER and exact-line accuracy; the tables below
+use the held-out rows `train.py` records in `artifacts/split_manifest.json`
+and evaluation-only manifests no run has trained on.
 
-### Current measured results (2026-09-20, `data/labels.csv`, 3681 held-out samples)
+## Results
+
+The sections below are in chronological order; [Where the model stands](#where-the-model-stands)
+at the top of this README summarizes the latest numbers.
+
+### Baseline (2026-09-20, `data/labels.csv`, 3681 held-out samples)
 
 ```
 python scripts/evaluate.py --labels labels.csv
