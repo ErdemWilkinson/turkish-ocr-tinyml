@@ -115,7 +115,7 @@ been selected, and nothing here has been integrated into the firmware repo.
 
 ## 8. Export-time LSTM graph-explosion bug (found and fixed)
 
-A real device-integration audit against the trained `turkish_line_ocr_int8.tflite`
+A real device-integration audit against the trained `erdem_ocr_int8.tflite`
 found that the exported graph had 2,308 ops instead of the low dozens
 expected for this architecture — not a size problem (the file was a
 reasonable 1.45MB, peak activation RAM ~320KB) but a per-op interpreter
@@ -135,7 +135,7 @@ the 40 timesteps × 2 layers × 2 directions worth of gate math
 
 1. `unroll=False` (the default) on both LSTM layers in `recognition_body()`
    (`scripts/train.py`).
-2. `scripts/export_tflite.py` no longer converts `turkish_line_ocr.keras`
+2. `scripts/export_tflite.py` no longer converts `erdem_ocr.keras`
    directly. It rebuilds the recognition graph on a **statically-shaped**
    `batch_shape=(1, IMAGE_HEIGHT, IMAGE_WIDTH, 1)` input via the same
    `recognition_body()` function, copies the trained weights across with
@@ -159,8 +159,8 @@ input/output tensor shapes unchanged (`1×32×160×1` → `1×40×90`), and peak
 activation RAM stayed ~320KB (expected — the actual per-timestep
 computation is identical, only its graph *representation* shrank).
 
-**Consequence: the existing `artifacts/turkish_line_ocr.keras` and
-`artifacts/turkish_line_ocr_int8.tflite` were trained/exported before this
+**Consequence: the existing `artifacts/erdem_ocr.keras` and
+`artifacts/erdem_ocr_int8.tflite` were trained/exported before this
 fix and still have the 2,308-op graph baked in.** A full retrain is
 required — this is a code fix, not a re-export; the saved `.keras` file's
 graph already has `unroll=True` compiled into its structure. Re-run

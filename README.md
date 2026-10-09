@@ -236,7 +236,7 @@ python scripts\train.py
 python scripts\evaluate.py --labels labels.csv                   # CER + exact-line accuracy on a held-out split
 python scripts\evaluate.py --labels tstr_test_labels.csv --full  # every row of an evaluation-only manifest
 python scripts\make_representative.py    # rebuilds the int8 calibration sample set
-python scripts\export_tflite.py          # writes artifacts/turkish_line_ocr_int8.tflite
+python scripts\export_tflite.py          # writes artifacts/erdem_ocr_int8.tflite
 python scripts\evaluate_tflite.py        # sanity-checks the quantized model
 ```
 
@@ -248,7 +248,7 @@ defaults to `artifacts/`).
 
 Four more optional variables control a continuation run:
 
-- `OCR_WARM_START`: path to an existing `turkish_line_ocr.keras`; training
+- `OCR_WARM_START`: path to an existing `erdem_ocr.keras`; training
   continues from its weights instead of starting from random ones. Point it
   at a copy outside `OCR_ARTIFACTS`, since the run overwrites the model there.
 - `OCR_LR`: initial learning rate (default `1e-3`; a continuation run

@@ -2,7 +2,7 @@
 
 Rebuilds the recognition graph on a statically-shaped (batch=1) input and
 copies the trained weights across before converting, rather than exporting
-turkish_line_ocr.keras directly. This is required, not just tidier: the
+erdem_ocr.keras directly. This is required, not just tidier: the
 saved recognition_model has a flexible (None) batch dimension, and with
 train.py's LSTM layers set to unroll=False (see recognition_body()'s
 docstring for why unroll=True is worse), TFLite's converter cannot lower
@@ -44,7 +44,7 @@ def build_static_batch_model(trained_model: tf.keras.Model) -> tf.keras.Model:
 
 
 def main() -> None:
-    model_path = ARTIFACTS / "turkish_line_ocr.keras"
+    model_path = ARTIFACTS / "erdem_ocr.keras"
     if not model_path.exists():
         raise SystemExit("Train the OCR model before exporting it.")
     trained_model = tf.keras.models.load_model(model_path)
@@ -57,7 +57,7 @@ def main() -> None:
     converter.inference_input_type = tf.int8
     converter.inference_output_type = tf.int8
     output = converter.convert()
-    target = ARTIFACTS / "turkish_line_ocr_int8.tflite"
+    target = ARTIFACTS / "erdem_ocr_int8.tflite"
     target.write_bytes(output)
     print(f"Wrote {target} ({len(output):,} bytes)")
 

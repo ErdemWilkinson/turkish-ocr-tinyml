@@ -84,7 +84,7 @@ def main() -> None:
         else:
             validation_idx = np.arange(len(rows))
 
-    model = tf.keras.models.load_model(artifacts / "turkish_line_ocr.keras")
+    model = tf.keras.models.load_model(artifacts / "erdem_ocr.keras")
 
     total_chars = 0
     total_edits = 0

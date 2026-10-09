@@ -47,7 +47,7 @@ def main() -> None:
     blank_id = alphabet_info["blank_id"]
     id_to_char = {index + 1: character for index, character in enumerate(alphabet_info["alphabet"])}
 
-    model_bytes = (ARTIFACTS / "turkish_line_ocr_int8.tflite").read_bytes()
+    model_bytes = (ARTIFACTS / "erdem_ocr_int8.tflite").read_bytes()
     interpreter = tf.lite.Interpreter(model_content=model_bytes)
     interpreter.allocate_tensors()
     input_detail = interpreter.get_input_details()[0]

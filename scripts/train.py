@@ -263,7 +263,7 @@ def main() -> None:
     (ARTIFACTS / "split_manifest.json").write_text(
         json.dumps(split_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    recognition_model.save(ARTIFACTS / "turkish_line_ocr.keras")
+    recognition_model.save(ARTIFACTS / "erdem_ocr.keras")
     (ARTIFACTS / "alphabet.json").write_text(
         json.dumps({"alphabet": ALPHABET, "blank_id": BLANK_ID}, ensure_ascii=False, indent=2),
         encoding="utf-8",

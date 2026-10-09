@@ -22,7 +22,7 @@ alphabet_info = json.loads((ARTIFACTS / "alphabet.json").read_text(encoding="utf
 BLANK_ID = alphabet_info["blank_id"]
 ID_TO_CHAR = {index + 1: character for index, character in enumerate(alphabet_info["alphabet"])}
 
-model = tf.keras.models.load_model(ARTIFACTS / "turkish_line_ocr.keras")
+model = tf.keras.models.load_model(ARTIFACTS / "erdem_ocr.keras")
 
 
 def greedy_ctc_decode(logits: np.ndarray) -> str:
