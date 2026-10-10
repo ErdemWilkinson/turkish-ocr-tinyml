@@ -26,8 +26,9 @@ Models trained on the additional word crops are bound by these terms as well:
 - orkungedik OCR Turkish word dataset: **no license is stated**. Do not
   redistribute a model trained on it until the author clarifies.
 
-The model currently in `artifacts/` was trained before these three datasets
-were added and is not affected by the last two points.
+The model in `artifacts/` from 2026-10-10 onward was trained with all three,
+so all three points apply to it. The last model trained without them is the
+2026-10-09 morning one.
 
 ## Attribution
 
