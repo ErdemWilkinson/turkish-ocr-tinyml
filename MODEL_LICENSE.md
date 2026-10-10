@@ -17,8 +17,26 @@ Any model trained with TS-TR is released under
 - You must give credit to this project and to the datasets listed below.
 - You may not use the model for commercial purposes.
 
+## Models trained with the 2026-10-09 evening data
+
+Models trained on the additional word crops are bound by these terms as well:
+
+- Synthetic Turkish Scene Text (STS-TR), CC BY-NC 4.0: non-commercial.
+- esengul3 Turkish word OCR, CC BY-SA 4.0: attribution and share-alike.
+- orkungedik OCR Turkish word dataset: **no license is stated**. Do not
+  redistribute a model trained on it until the author clarifies.
+
+The model currently in `artifacts/` was trained before these three datasets
+were added and is not affected by the last two points.
+
 ## Attribution
 
+- Synthetic Turkish Scene Text Recognition (STS-TR), Serdar Yıldız, CC BY-NC 4.0.
+  <https://www.kaggle.com/datasets/serdaryildiz/synthetic-turkish-scene-text-recognition-dataset>
+- Turkish Word OCR, esengul3, CC BY-SA 4.0.
+  <https://huggingface.co/datasets/esengul3/turkish-word-ocr>
+- OCR Turkish Word Dataset, orkungedik (no license listed).
+  <https://huggingface.co/datasets/orkungedik/ocr_turkish_word_dataset>
 - Turkish Scene Text Recognition (TS-TR) dataset, Serdar Yıldız, CC BY-NC 4.0.
   <https://www.kaggle.com/datasets/serdaryildiz/turkish-scene-text-recognition-dataset>
 - Turkish OCR Text Image Dataset, CC BY 4.0.

@@ -60,6 +60,12 @@ What is still open:
 - **Small real-photo test.** The 66-line set moves by a few lines per
   version; it is too small to rank models on its own.
 
+Two later runs are described under [Results](#results) but are not in the
+table above: an augmentation run and a run on 82,000 more word crops
+(2026-10-09 evening). The second reached 51.06% on the TS-TR test split, but
+its `.keras` file was overwritten by an unrelated overnight job, so the model
+shipped in `artifacts/` is still the 2026-10-09 morning one.
+
 Details of each run are under [Results](#results).
 
 ## Why a custom model instead of an existing OCR package
@@ -207,8 +213,14 @@ its own license, and attribution is required where the license says so.
 | Turkish OCR Text Image Dataset | Training (printed lines) | CC BY 4.0 | [Zenodo record 21923181](https://zenodo.org/records/21923181) |
 | Turkish Scene Text Recognition (TS-TR), Serdar Yıldız | Training and evaluation (real scene text) | **CC BY-NC 4.0** | [Kaggle](https://www.kaggle.com/datasets/serdaryildiz/turkish-scene-text-recognition-dataset), [MViT-TR repository](https://github.com/serdaryildiz/MViT-TR) |
 
-TS-TR is non-commercial. A model trained with it inherits that restriction;
-see [MODEL_LICENSE.md](MODEL_LICENSE.md).
+| Turkish Word OCR, esengul3 (45,000 crops used) | Training (printed/rendered words) | CC BY-SA 4.0 | [Hugging Face](https://huggingface.co/datasets/esengul3/turkish-word-ocr) |
+| OCR Turkish Word Dataset, orkungedik (30,000 crops used) | Training (words) | **No license listed** | [Hugging Face](https://huggingface.co/datasets/orkungedik/ocr_turkish_word_dataset) |
+| Synthetic Turkish Scene Text (STS-TR), Serdar Yıldız (7,814 crops used) | Training (synthetic scene text) | **CC BY-NC 4.0** | [Kaggle](https://www.kaggle.com/datasets/serdaryildiz/synthetic-turkish-scene-text-recognition-dataset) |
+
+TS-TR and STS-TR are non-commercial. A model trained with them inherits that
+restriction; see [MODEL_LICENSE.md](MODEL_LICENSE.md). The orkungedik dataset
+states no license, so a model trained on it should not be redistributed until
+that is clarified. The esengul3 data is share-alike.
 
 ## Training pipeline
 
@@ -415,6 +427,40 @@ The int8 gap is unchanged. On the 3,993 held-out samples:
 Quantization remains the main blocker for on-device use. Models from this
 run are non-commercial because of TS-TR's license; see
 [MODEL_LICENSE.md](MODEL_LICENSE.md).
+
+### 2026-10-09 evening: augmentation and 82,000 more word crops
+
+Two further continuations of the morning model, both with the same fixed
+held-out rows kept out of training (`OCR_FIXED_VALIDATION`):
+
+- **Augmentation** (`OCR_AUGMENT=1`): random shift, contrast, brightness and
+  sensor noise applied to training crops every epoch.
+- **More data**: esengul3 words (45,000), orkungedik words (30,000) and
+  STS-TR synthetic scene text (7,814, the readable part of the first 500 MB
+  of its archive), 82,814 crops in total, with augmentation. 4 epochs in a
+  55-minute budget, best validation loss 3.70. The training pipeline was
+  changed to stream batches through `tf.data.Dataset.from_generator`,
+  because the arrays no longer fit TensorFlow's 2 GB graph limit.
+
+| Test set | Samples | Exact-line | Note |
+|---|---:|---:|---|
+| TS-TR official test split | 2078 | **51.06%** | morning model: 45.33% |
+| Separate test (`test_labels.csv`) | 66 | 12.12% | morning model: 19.70% |
+| int8 TFLite, new held-out set | 16,443 | 47.1% (CER 17.8%) | held-out set now includes the new sources; not comparable with the 3,993-row figures above |
+
+Reading the result: TS-TR improved by six points; the 66 real photos got
+worse by five lines out of 66 -- at that size, a few lines, but not an
+improvement. The new word datasets are mostly clean rendered words, not
+photos, and the validation loss is not comparable with earlier runs.
+
+**This model is not the one in `artifacts/`.** An overnight job on
+2026-10-10 started a fresh OCR model with an alphabet widened to 105
+characters (code symbols), which overwrote `erdem_ocr.keras` with an
+untrained network (0.1% on TS-TR). It was moved to
+`artifacts_overnight_2026-10-10_untrained/`, and the 2026-10-09 morning model
+(45.33% on TS-TR) was put back. `train.py` keeps the original 88-character
+alphabet. The 51.06% model's `.keras` file no longer exists; its int8
+`erdem_ocr_int8.tflite` does, and only that file is left from this run.
 
 ## Hardware integration status
 

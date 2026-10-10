@@ -210,6 +210,37 @@ def split_indices(rows: list[dict[str, str]], groups: np.ndarray) -> tuple[np.nd
     return np.flatnonzero(~is_validation), np.flatnonzero(is_validation)
 
 
+def augment_image(image: tf.Tensor) -> tf.Tensor:
+    """Random small shift, contrast, brightness and sensor noise for one
+    [-1, 1] line image. Applied only to training rows, fresh every epoch, so
+    the model cannot memorize exact pixels of a fixed training set."""
+    # Shift by cropping from an edge-replicated border (mirroring would add fake strokes).
+    image = tf.concat([tf.repeat(image[:, :1], 6, axis=1), image, tf.repeat(image[:, -1:], 6, axis=1)], axis=1)
+    image = tf.concat([tf.repeat(image[:1], 2, axis=0), image, tf.repeat(image[-1:], 2, axis=0)], axis=0)
+    image = tf.image.random_crop(image, [IMAGE_HEIGHT, IMAGE_WIDTH, 1])
+    mean = tf.reduce_mean(image)
+    image = (image - mean) * tf.random.uniform([], 0.7, 1.3) + mean + tf.random.uniform([], -0.2, 0.2)
+    image += tf.random.normal(tf.shape(image), stddev=tf.random.uniform([], 0.0, 0.06))
+    return tf.clip_by_value(image, -1.0, 1.0)
+
+
+def augmented_dataset(inputs: list[np.ndarray], targets: np.ndarray, batch_size: int) -> tf.data.Dataset:
+    images, labels, input_lengths, label_lengths = inputs
+    # from_tensor_slices embeds the arrays in the graph (2 GB protobuf limit), so stream by index instead.
+    def generate():
+        for i in np.random.permutation(len(images)):
+            yield (images[i], labels[i], input_lengths[i], label_lengths[i]), targets[i]
+
+    signature = ((tf.TensorSpec(images.shape[1:], images.dtype), tf.TensorSpec(labels.shape[1:], labels.dtype),
+                  tf.TensorSpec(input_lengths.shape[1:], input_lengths.dtype),
+                  tf.TensorSpec(label_lengths.shape[1:], label_lengths.dtype)),
+                 tf.TensorSpec(targets.shape[1:], targets.dtype))
+    dataset = tf.data.Dataset.from_generator(generate, output_signature=signature)
+    dataset = dataset.map(lambda x, y: ((augment_image(x[0]), x[1], x[2], x[3]), y),
+                          num_parallel_calls=tf.data.AUTOTUNE)
+    return dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+
+
 def main() -> None:
     rows = load_rows()
     images, labels, lengths, groups = make_arrays(rows)
@@ -237,13 +268,16 @@ def main() -> None:
         print(f"Warm start from {warm_start}")
     max_minutes = os.environ.get("OCR_MAX_MINUTES")
     budget_callbacks = [TimeBudget(float(max_minutes))] if max_minutes else []
+    train_targets = np.zeros((len(train_idx), 1), dtype=np.float32)
+    if os.environ.get("OCR_AUGMENT") == "1":
+        print("Training with on-the-fly augmentation (shift, contrast, brightness, noise).")
+        fit_data = {"x": augmented_dataset(train_inputs, train_targets, 64)}
+    else:
+        fit_data = {"x": train_inputs, "y": train_targets, "batch_size": 64, "shuffle": True}
     training_model.fit(
-        train_inputs,
-        np.zeros((len(train_idx), 1), dtype=np.float32),
+        **fit_data,
         validation_data=(validation_inputs, np.zeros((len(validation_idx), 1), dtype=np.float32)),
         epochs=150,
-        batch_size=64,
-        shuffle=True,
         callbacks=[
             tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True),
             tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=4, min_lr=1e-5),
