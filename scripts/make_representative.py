@@ -1,45 +1,37 @@
-"""Rebuild representative_images.npy with a balanced mix of synthetic and real samples."""
+"""Rebuild representative_images.npy, the int8 calibration set, without retraining.
+
+Uses the same selection as train.py (representative_indices) over the training
+rows only: rows that artifacts/split_manifest.json lists as held out are left
+out, so calibration never sees validation data. Reads the manifests named by
+OCR_LABELS_CSV, like train.py.
+"""
 from __future__ import annotations
 
-import csv
-from pathlib import Path
+import json
 
 import numpy as np
-import tensorflow as tf
 
-ROOT = Path(__file__).resolve().parents[1]
-ARTIFACTS = ROOT / "artifacts"
-IMAGE_WIDTH, IMAGE_HEIGHT = 160, 32
-
-
-def load_image(path: Path) -> np.ndarray:
-    image = tf.io.read_file(str(path))
-    image = tf.image.decode_image(image, channels=1, expand_animations=False)
-    image = tf.image.resize(image, [IMAGE_HEIGHT, IMAGE_WIDTH])
-    image = tf.cast(image, tf.float32) / 127.5 - 1.0
-    return image.numpy()
+from train import (ARTIFACTS, describe_sources, load_image, load_rows,
+                   representative_indices)
 
 
 def main() -> None:
-    rng = np.random.default_rng(7)
+    rows = load_rows()
+    split_path = ARTIFACTS / "split_manifest.json"
+    held_out: set[str] = set()
+    if split_path.exists():
+        held_out = {row["image"] for row in json.loads(split_path.read_text(encoding="utf-8"))["validation"]}
+    else:
+        print(f"Warning: {split_path} not found; calibrating on all rows, validation rows included.")
+    candidates = np.array([i for i, row in enumerate(rows) if row["image"] not in held_out], dtype=int)
+    if not len(candidates):
+        raise SystemExit("No training rows left after excluding the held-out set; check OCR_LABELS_CSV.")
 
-    with (ROOT / "data" / "real_labels.csv").open(encoding="utf-8", newline="") as handle:
-        real_rows = list(csv.DictReader(handle))
-    with (ROOT / "data" / "labels.csv").open(encoding="utf-8", newline="") as handle:
-        synthetic_rows = list(csv.DictReader(handle))
-
-    real_sample = rng.choice(len(real_rows), size=min(150, len(real_rows)), replace=False)
-    synthetic_sample = rng.choice(len(synthetic_rows), size=min(150, len(synthetic_rows)), replace=False)
-
-    images = []
-    for i in real_sample:
-        images.append(load_image(ROOT / "data" / real_rows[i]["image"]))
-    for i in synthetic_sample:
-        images.append(load_image(ROOT / "data" / synthetic_rows[i]["image"]))
-
-    array = np.stack(images).astype(np.float32)
-    np.save(ARTIFACTS / "representative_images.npy", array)
-    print(f"Wrote {array.shape[0]} representative images ({len(real_sample)} real, {len(synthetic_sample)} synthetic).")
+    chosen = representative_indices(rows, candidates)
+    images = np.stack([load_image(rows[i]["_base"], rows[i]["image"]) for i in chosen]).astype(np.float32)
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    np.save(ARTIFACTS / "representative_images.npy", images)
+    print(f"Wrote {len(images)} calibration images: {describe_sources(rows, chosen)}")
 
 
 if __name__ == "__main__":

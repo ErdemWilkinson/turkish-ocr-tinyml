@@ -1,15 +1,18 @@
-"""Evaluate a trained OCR recognizer: CER and exact-line accuracy on a held-out group split."""
+"""Evaluate a trained OCR recognizer: CER and exact-line accuracy.
+
+By default only the rows train.py recorded as held out in
+artifacts/split_manifest.json are scored; --full scores every row of the given
+manifests (for evaluation-only sets the model never trained on).
+"""
 from __future__ import annotations
 
 import argparse
 import csv
 import json
-import os
 from pathlib import Path
 
 import numpy as np
 import tensorflow as tf
-from sklearn.model_selection import GroupShuffleSplit
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE_WIDTH, IMAGE_HEIGHT = 160, 32
@@ -54,7 +57,8 @@ def main() -> None:
     parser.add_argument("--labels", action="append", required=True,
                          help="labels.csv path(s) relative to ocr/data; repeatable")
     parser.add_argument("--full", action="store_true",
-                         help="Evaluate on every row instead of holding out a validation split.")
+                         help="Evaluate on every row of --labels (use for evaluation-only manifests "
+                              "the model never trained on, e.g. tstr_test_labels.csv).")
     args = parser.parse_args()
 
     artifacts = Path(args.artifacts)
@@ -76,13 +80,19 @@ def main() -> None:
     if args.full:
         validation_idx = np.arange(len(rows))
     else:
-        groups = np.array([f"{row['_base']}::{row['group']}" for row in rows])
-        if len(np.unique(groups)) >= 2:
-            _, validation_idx = next(
-                GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42).split(rows, groups=groups)
-            )
-        else:
-            validation_idx = np.arange(len(rows))
+        # Score only the rows train.py actually held out. Re-drawing a group
+        # split here would not reproduce it (different ratio and ordering), so
+        # part of the "held-out" set would be rows the model trained on.
+        split_path = artifacts / "split_manifest.json"
+        if not split_path.exists():
+            raise SystemExit(f"Missing {split_path}. Retrain to record the held-out rows, or pass --full "
+                             "for a manifest the model never trained on.")
+        held_out = {row["image"] for row in json.loads(split_path.read_text(encoding="utf-8"))["validation"]}
+        validation_idx = np.array([i for i, row in enumerate(rows) if row["image"] in held_out], dtype=int)
+        if not len(validation_idx):
+            raise SystemExit(f"None of the --labels rows are in {split_path}'s validation set. "
+                             "Use --full if these labels were never trained on.")
+        print(f"Using {len(validation_idx)} of {len(rows)} rows held out in {split_path.name}.")
 
     model = tf.keras.models.load_model(artifacts / "erdem_ocr.keras")
 

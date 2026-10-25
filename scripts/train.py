@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -241,6 +242,67 @@ def augmented_dataset(inputs: list[np.ndarray], targets: np.ndarray, batch_size:
     return dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
 
+REPRESENTATIVE_SAMPLES = 500
+REPRESENTATIVE_PER_SOURCE = 25
+
+
+def source_of(row: dict[str, str]) -> str:
+    """Data source of a row: the first folder of its image path
+    (lines/, real_lines/, tstr_lines/, zenodo_lines/, ...)."""
+    return row["image"].replace("\\", "/").split("/")[0]
+
+
+def representative_indices(rows: list[dict[str, str]], candidate_idx: np.ndarray,
+                           seed: int = 7) -> np.ndarray:
+    """Pick the images the int8 converter calibrates activation ranges on.
+
+    Every source contributes a few rows, so a small but different one (real
+    photos, whose contrast and noise differ from rendered text) still shapes
+    the ranges; the rest is a uniform draw, so the set otherwise follows the
+    training mix instead of an arbitrary real/synthetic 50:50.
+    """
+    rng = np.random.default_rng(seed)
+    candidates = np.asarray(candidate_idx, dtype=int)
+    sources = np.array([source_of(rows[i]) for i in candidates])
+    chosen: list[int] = []
+    for source in np.unique(sources):
+        members = candidates[sources == source]
+        chosen.extend(rng.choice(members, size=min(REPRESENTATIVE_PER_SOURCE, len(members)), replace=False))
+    remaining = np.setdiff1d(candidates, chosen)
+    extra = min(max(REPRESENTATIVE_SAMPLES - len(chosen), 0), len(remaining))
+    if extra:
+        chosen.extend(rng.choice(remaining, size=extra, replace=False))
+    return np.array(chosen, dtype=int)
+
+
+def describe_sources(rows: list[dict[str, str]], indices: np.ndarray) -> str:
+    counts: dict[str, int] = {}
+    for i in indices:
+        counts[source_of(rows[i])] = counts.get(source_of(rows[i]), 0) + 1
+    return ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
+
+
+def back_up_previous_artifacts() -> None:
+    """Copy the existing model, its alphabet and its held-out manifest to
+    artifacts/previous/<model mtime>/ before this run overwrites them.
+
+    A model and the split_manifest.json it was trained against belong
+    together; overwriting them silently once cost a good model, and a new
+    run's val_loss is not comparable with an older one when the data changed,
+    so keeping the old files is safer than guessing which one is better.
+    """
+    model_path = ARTIFACTS / "erdem_ocr.keras"
+    if not model_path.exists():
+        return
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(model_path.stat().st_mtime))
+    target = ARTIFACTS / "previous" / stamp
+    target.mkdir(parents=True, exist_ok=True)
+    for name in ("erdem_ocr.keras", "alphabet.json", "split_manifest.json"):
+        if (ARTIFACTS / name).exists():
+            shutil.copy2(ARTIFACTS / name, target / name)
+    print(f"Previous model backed up to {target}")
+
+
 def main() -> None:
     rows = load_rows()
     images, labels, lengths, groups = make_arrays(rows)
@@ -269,24 +331,34 @@ def main() -> None:
     max_minutes = os.environ.get("OCR_MAX_MINUTES")
     budget_callbacks = [TimeBudget(float(max_minutes))] if max_minutes else []
     train_targets = np.zeros((len(train_idx), 1), dtype=np.float32)
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    # Written every time val_loss improves, so a run stopped by hand or killed
+    # still leaves its best weights on disk (load with recognition_model.load_weights).
+    checkpoint_path = ARTIFACTS / "best_training.weights.h5"
     if os.environ.get("OCR_AUGMENT") == "1":
         print("Training with on-the-fly augmentation (shift, contrast, brightness, noise).")
         fit_data = {"x": augmented_dataset(train_inputs, train_targets, 64)}
     else:
         fit_data = {"x": train_inputs, "y": train_targets, "batch_size": 64, "shuffle": True}
-    training_model.fit(
+    history = training_model.fit(
         **fit_data,
         validation_data=(validation_inputs, np.zeros((len(validation_idx), 1), dtype=np.float32)),
         epochs=150,
         callbacks=[
             tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True),
             tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=4, min_lr=1e-5),
+            tf.keras.callbacks.ModelCheckpoint(str(checkpoint_path), monitor="val_loss",
+                                               save_best_only=True, save_weights_only=True),
             *budget_callbacks,
         ],
         verbose=2,
     )
 
-    ARTIFACTS.mkdir(exist_ok=True)
+    # A run that produced no finite validation loss (killed before epoch 1
+    # finished, NaN loss) has nothing worth promoting over the existing model.
+    if not any(np.isfinite(value) for value in history.history.get("val_loss", [])):
+        raise SystemExit("Training produced no finite val_loss; leaving existing artifacts untouched.")
+    back_up_previous_artifacts()
     split_manifest = {
         "version": 1,
         "validation": [
@@ -302,13 +374,10 @@ def main() -> None:
         json.dumps({"alphabet": ALPHABET, "blank_id": BLANK_ID}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    rep_rng = np.random.default_rng(7)
-    real_train_idx = np.array([i for i in train_idx if rows[i]["image"].startswith("real_lines/")])
-    synthetic_train_idx = np.array([i for i in train_idx if not rows[i]["image"].startswith("real_lines/")])
-    real_sample = rep_rng.choice(real_train_idx, size=min(150, len(real_train_idx)), replace=False) if len(real_train_idx) else np.array([], dtype=int)
-    synthetic_sample = rep_rng.choice(synthetic_train_idx, size=min(150, len(synthetic_train_idx)), replace=False) if len(synthetic_train_idx) else np.array([], dtype=int)
-    representative_idx = np.concatenate([real_sample, synthetic_sample]).astype(int)
+    representative_idx = representative_indices(rows, train_idx)
     np.save(ARTIFACTS / "representative_images.npy", images[representative_idx])
+    print(f"Saved {len(representative_idx)} int8 calibration images: "
+          f"{describe_sources(rows, representative_idx)}")
     print(f"Saved OCR model with {len(rows)} samples and {len(CHAR_TO_ID)} characters.")
 
 
