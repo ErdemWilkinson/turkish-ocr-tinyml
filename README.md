@@ -641,7 +641,8 @@ What this shows:
   crops have not been checked by hand. Treat this as unmeasured, not as a
   result.
 
-B is the model published as InviolusOCR. Files: `artifacts_B_1031/`.
+B is the model published as InviolusOCR on Hugging Face:
+[inviolus/InviolusOCR](https://huggingface.co/inviolus/InviolusOCR). Files: `artifacts_B_1031/`.
 Logs and the full results: `artifacts/night-2026-10-31/` (`benchmark.json`).
 
 ## Hardware integration status
