@@ -641,6 +641,12 @@ What this shows:
   crops have not been checked by hand. Treat this as unmeasured, not as a
   result.
 
+A follow-up run (C) continued B for up to 170 minutes at learning rate
+5e-4. It stopped early after 11 epochs: its best validation loss (4.29) came in
+the first epoch, about where B had ended. It scored 78.1% int8 held-out and 57.7% int8 TS-TR, so B stays the
+published model. More of the same data does not help B. The next gains have
+to come from new data or a larger sequence head.
+
 B is the model published as InviolusOCR on Hugging Face:
 [inviolus/InviolusOCR](https://huggingface.co/inviolus/InviolusOCR). Files: `artifacts_B_1031/`.
 Logs and the full results: `artifacts/night-2026-10-31/` (`benchmark.json`).
