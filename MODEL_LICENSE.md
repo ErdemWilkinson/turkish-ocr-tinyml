@@ -30,6 +30,14 @@ The model in `artifacts/` from 2026-10-10 onward was trained with all three,
 so all three points apply to it. The last model trained without them is the
 2026-10-09 morning one.
 
+## InviolusOCR 2026-10-31 models (A and B)
+
+Trained on synthetic lines, Zenodo, TS-TR, esengul3 and STS-TR, **without**
+the orkungedik crops, starting from the 2026-10-09 weights (also trained
+without orkungedik). They carry the non-commercial term (TS-TR, STS-TR) and
+the share-alike term (esengul3), and are released under
+**Creative Commons Attribution-NonCommercial-ShareAlike 4.0 (CC BY-NC-SA 4.0)**.
+
 ## Attribution
 
 - Synthetic Turkish Scene Text Recognition (STS-TR), Serdar Yıldız, CC BY-NC 4.0.

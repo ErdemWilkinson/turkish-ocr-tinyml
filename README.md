@@ -1,6 +1,6 @@
-# Turkish TinyML Line OCR
+# InviolusOCR
 
-A compact, full-int8 CNN-CTC recognizer for a single horizontal line of
+**InviolusOCR** (formerly "Turkish TinyML Line OCR") is a compact, full-int8 CNN-CTC recognizer for a single horizontal line of
 printed Turkish text, sized to eventually run on a microcontroller-class
 embedded target. It started as part of the
 [makeshift-flipper](https://github.com/ErdemWilkinson/makeshift-flipper)
@@ -9,9 +9,12 @@ because it's a separate concern (Python/TensorFlow training pipeline vs.
 ESP-IDF C firmware) with its own, much larger dataset.
 
 **Status: training pipeline works end-to-end; not yet integrated into any
-firmware.** The float model reads 45% of unseen real scene-text crops and
-58% of held-out synthetic/printed lines exactly; the int8 export still
-loses most of that accuracy. See [Hardware integration status](#hardware-integration-status)
+firmware.** Newest model (2026-10-31, convolutional, 560,954 parameters,
+598 KB int8): the **int8** file reads **78.4%** of held-out lines and
+**58.2%** of unseen TS-TR scene-text crops exactly, losing about 1 point to
+quantization where the older LSTM models lost 30 to 48 points. See
+[2026-10-31: InviolusOCR conv model](#2026-10-31-inviolusocr-conv-model-no-orkungedik-data).
+See [Hardware integration status](#hardware-integration-status)
 below for exactly what's blocking integration and what's already decided.
 
 ## Where the model stands
@@ -569,6 +572,77 @@ What this run shows:
 
 This is the model in `artifacts/` (`erdem_ocr.keras`, `erdem_ocr_int8.tflite`).
 Logs: `artifacts/train-2026-10-25.log` and `artifacts/evaluate-*-2026-10-25.log`.
+
+### 2026-10-31: InviolusOCR conv model (no orkungedik data)
+
+Two models trained side by side for 200 minutes each, on the same data and
+held-out rows, with 7 CPU threads each:
+
+- **A, LSTM:** the existing CNN + BiLSTM + CTC model, 631,226 parameters.
+- **B, conv:** the BiLSTM replaced by four residual dilated 1-D convolutions
+  (dilation 1, 2, 4, 1; the PP-OCRv3 idea of a convolutional sequence
+  head), 560,954 parameters, 11% fewer.
+
+Both start from the 2026-10-09 weights (B takes the convolutional front end
+only). They use cosine learning-rate decay over the time budget
+(`OCR_COSINE=1`; A at 3e-4, B at 1e-3) and augmentation. Training data:
+synthetic lines, Zenodo, TS-TR, esengul3 and STS-TR, about 66,000 crops.
+The **orkungedik crops** (no license) and the real-photo rows (mismatched
+crops) are **left out** (`OCR_EXCLUDE_SOURCES`). The architecture is chosen
+with `OCR_ARCH=conv`.
+
+Every model below was scored by `scripts/benchmark.py` on the same rows:
+
+- **Held-out:** the 2026-10-25 held-out manifest minus the orkungedik rows,
+  12,093 lines.
+- **TS-TR test:** the official TS-TR test split, 2,078 crops, never trained on.
+
+The held-out set is smaller than in the earlier sections, so its numbers are
+not comparable with the 16,443-row figures above.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark-1031-heldout-dark.svg">
+  <img alt="Exact-line accuracy on 12,093 held-out lines, float and int8, for five model versions" src="docs/benchmark-1031-heldout-light.svg">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark-1031-tstr_test-dark.svg">
+  <img alt="Exact-line accuracy on the 2,078-crop TS-TR test split, float and int8, for five model versions" src="docs/benchmark-1031-tstr_test-light.svg">
+</picture>
+
+| Model | Params | int8 size | Held-out float | Held-out **int8** | TS-TR float | TS-TR **int8** |
+|---|---:|---:|---:|---:|---:|---:|
+| 2026-10-09 (on Hugging Face) | 631,226 | 665 KB | 58.8% | 32.9% | 45.3% | 33.5% |
+| 2026-10-10 | 631,226 | 665 KB | 77.2% | 39.5% | 59.5% | 42.7% |
+| 2026-10-25 | 631,226 | 665 KB | **80.0%** | 32.1% | **65.1%** | 48.7% |
+| A, LSTM, 2026-10-31 | 631,226 | 665 KB | 76.9% | 48.2% | 58.7% | 41.6% |
+| **B, conv, 2026-10-31** | **560,954** | **598 KB** | 79.4% | **78.4%** | 60.0% | **58.2%** |
+
+Character error rate of B int8: 9.1% held-out, 18.1% TS-TR. The 2026-10-25
+model's int8 figures are 18.7% and 24.6%.
+
+What this shows:
+
+- **The int8 problem was the LSTM.** B loses 1.0 point (held-out) and 1.7
+  points (TS-TR) from float to int8. Every LSTM model loses 17 to 48 points.
+  On the file that would actually run on a device, B is 30 points ahead of
+  the best earlier model on held-out lines and 9.5 points ahead on TS-TR,
+  while being 11% smaller.
+- **Leaving orkungedik out costs little.** A is the same architecture as the
+  2026-10-10/10-25 models without the orkungedik crops. It is 0.3 to 0.8
+  points behind 2026-10-10 in float. That comparison is approximate, because
+  the epochs and learning-rate schedule differ.
+- **2026-10-25 is still the best float model** on TS-TR (65.1% against 60.0%),
+  but it cannot be published (orkungedik data) and its int8 file is far worse.
+- **Licence plates are not read yet.** `scripts/prepare_plates_test.py` cuts
+  250 plate crops for evaluation only. Every model scores 0% exact there,
+  with a character error rate of 86 to 93%. Plates (two-part spacing, plate
+  fonts, different aspect ratio) are out of the training domain, and the
+  crops have not been checked by hand. Treat this as unmeasured, not as a
+  result.
+
+B is the model published as InviolusOCR. Files: `artifacts_B_1031/`.
+Logs and the full results: `artifacts/night-2026-10-31/` (`benchmark.json`).
 
 ## Hardware integration status
 

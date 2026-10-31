@@ -12,9 +12,15 @@ eğitim verisi/
 # small, hand-decided config (the character set), not a training output,
 # and scripts/train.py expects to find it, so it's tracked below.
 artifacts/*
+!artifacts/night-2026-10-31/
+artifacts/night-2026-10-31/*
+!artifacts/night-2026-10-31/benchmark.json
 !artifacts/alphabet.json
 
 # Python
 __pycache__/
 *.py[cod]
 .venv/
+
+# Dated run and backup folders (same rule as artifacts/); results are in README.md
+artifacts_*/

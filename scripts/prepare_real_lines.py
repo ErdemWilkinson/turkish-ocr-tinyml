@@ -1,6 +1,7 @@
 """Create reviewable line crops and preliminary Turkish labels from document photos."""
 from __future__ import annotations
 
+import argparse
 import csv
 import io
 import subprocess
@@ -58,6 +59,15 @@ def tsv_lines(image_path: Path) -> list[tuple[str, tuple[int, int, int, int], fl
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--force", action="store_true",
+                        help="overwrite existing crops and manifest (renumbers every crop)")
+    args = parser.parse_args()
+    # Crops are numbered from 000000 and real_labels.csv / test_labels.csv refer
+    # to them by that number; regenerating shifts the numbering and silently
+    # breaks every label that was already reviewed.
+    if (MANIFEST.exists() or any(OUTPUT.glob("*.png"))) and not args.force:
+        raise SystemExit(f"{MANIFEST.name} or crops in {OUTPUT} already exist; pass --force to overwrite them.")
     if not TESSERACT.exists():
         raise SystemExit(f"Tesseract not found: {TESSERACT}")
     images = sorted(SOURCE.glob("*.jpeg"))

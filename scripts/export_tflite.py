@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 
-from train import IMAGE_HEIGHT, IMAGE_WIDTH, recognition_body
+from train import IMAGE_HEIGHT, IMAGE_WIDTH, model_arch, recognition_body
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = Path(os.environ.get("OCR_ARTIFACTS", ROOT / "artifacts"))
@@ -37,7 +37,7 @@ def representative_dataset():
 
 def build_static_batch_model(trained_model: tf.keras.Model) -> tf.keras.Model:
     static_input = tf.keras.Input(batch_shape=(1, IMAGE_HEIGHT, IMAGE_WIDTH, 1), name="image")
-    static_logits = recognition_body(static_input)
+    static_logits = recognition_body(static_input, model_arch(trained_model))
     static_model = tf.keras.Model(static_input, static_logits)
     static_model.set_weights(trained_model.get_weights())
     return static_model

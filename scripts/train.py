@@ -14,6 +14,13 @@ from sklearn.model_selection import GroupShuffleSplit
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = Path(os.environ.get("OCR_ARTIFACTS", ROOT / "artifacts"))
+# "lstm": conv body + 2 BiLSTM (the original model). "conv": the same conv body
+# + a dilated residual Conv1D sequence block, no recurrent layers (PP-OCRv3
+# moved away from LSTM too); conv/batch-norm ops quantize to int8 far better.
+ARCH = os.environ.get("OCR_ARCH", "lstm")
+if os.environ.get("OCR_THREADS"):
+    tf.config.threading.set_intra_op_parallelism_threads(int(os.environ["OCR_THREADS"]))
+    tf.config.threading.set_inter_op_parallelism_threads(2)
 IMAGE_WIDTH, IMAGE_HEIGHT = 160, 32
 MAX_TEXT_LENGTH = 24
 TIME_STEPS = IMAGE_WIDTH // 4  # matches the two stride-2 conv layers below
@@ -44,6 +51,13 @@ def load_rows() -> list[dict[str, str]]:
         for row in file_rows:
             row["_base"] = str(base_dir)
         rows.extend(file_rows)
+    # OCR_EXCLUDE_SOURCES=orkungedik_lines,... drops whole sources (first image
+    # folder) without editing the manifests, e.g. data whose license is unclear.
+    excluded = {name for name in os.environ.get("OCR_EXCLUDE_SOURCES", "").split(",") if name}
+    if excluded:
+        before = len(rows)
+        rows = [row for row in rows if row["image"].replace("\\", "/").split("/")[0] not in excluded]
+        print(f"Excluded {before - len(rows)} rows from sources: {', '.join(sorted(excluded))}")
     if not rows:
         raise SystemExit("No training rows found.")
     for row in rows:
@@ -85,7 +99,12 @@ def make_arrays(rows: list[dict[str, str]]) -> tuple[np.ndarray, np.ndarray, np.
 L2 = tf.keras.regularizers.l2(2e-4)
 
 
-def recognition_body(image_input: tf.Tensor) -> tf.Tensor:
+def model_arch(model: tf.keras.Model) -> str:
+    """Which recognition_body() variant a saved model was built with."""
+    return "lstm" if any(isinstance(layer, tf.keras.layers.Bidirectional) for layer in model.layers) else "conv"
+
+
+def recognition_body(image_input: tf.Tensor, arch: str | None = None) -> tf.Tensor:
     """The conv+BiLSTM+softmax stack shared by the training and recognition
     graphs. Pulled out into its own function (rather than inlined in
     build_models()) so export_tflite.py can rebuild an identical graph on a
@@ -124,6 +143,19 @@ def recognition_body(image_input: tf.Tensor) -> tf.Tensor:
     x = tf.keras.layers.Permute((2, 1, 3))(x)  # width, height, channels
     x = tf.keras.layers.Reshape((TIME_STEPS, 2 * 128))(x)
     x = tf.keras.layers.Dense(128, activation="relu", kernel_regularizer=L2)(x)
+    if (arch or ARCH) == "conv":
+        # Residual dilated Conv1D blocks: receptive field 33 of the 40 steps,
+        # enough context for CTC without a recurrent layer.
+        x = tf.keras.layers.Dropout(0.2)(x)
+        for dilation in (1, 2, 4, 1):
+            y = tf.keras.layers.Conv1D(128, 5, padding="same", dilation_rate=dilation,
+                                       kernel_regularizer=L2)(x)
+            y = tf.keras.layers.BatchNormalization()(y)
+            y = tf.keras.layers.ReLU()(y)
+            y = tf.keras.layers.Dropout(0.1)(y)
+            x = tf.keras.layers.Add()([x, y])
+        x = tf.keras.layers.Dropout(0.3)(x)
+        return tf.keras.layers.Dense(NUM_CLASSES, activation="softmax", name="characters")(x)
     x = tf.keras.layers.Dropout(0.35)(x)
     x = tf.keras.layers.Bidirectional(
         tf.keras.layers.LSTM(96, return_sequences=True, unroll=False,
@@ -186,6 +218,44 @@ class TimeBudget(tf.keras.callbacks.Callback):
             self.model.stop_training = True
             if self.best_weights is not None:
                 self.model.set_weights(self.best_weights)
+
+
+class TimeCosine(tf.keras.callbacks.Callback):
+    """Cosine learning-rate decay over the OCR_MAX_MINUTES budget instead of
+    over a fixed epoch count (PP-OCR uses cosine decay with warm-up): the
+    epoch count of a time-budgeted run is not known in advance. The first
+    epoch runs at 30% as a warm-up for freshly initialised layers."""
+
+    def __init__(self, base_lr: float, minutes: float):
+        super().__init__()
+        self.base_lr, self.seconds = base_lr, minutes * 60.0
+
+    def on_train_begin(self, logs=None):
+        self.started = time.monotonic()
+
+    def on_epoch_begin(self, epoch, logs=None):
+        progress = min((time.monotonic() - self.started) / self.seconds, 1.0)
+        lr = self.base_lr * (0.3 if epoch == 0 else 0.5 * (1 + np.cos(np.pi * progress)))
+        tf.keras.backend.set_value(self.model.optimizer.learning_rate, max(lr, 1e-6))
+
+
+def warm_start_weights(recognition_model: tf.keras.Model, source: tf.keras.Model) -> None:
+    """Copy weights from an earlier model. Same architecture: everything.
+    Different architecture: the conv body's Conv2D/BatchNormalization layers
+    (identical in both variants) plus the first Dense, in order; the new
+    sequence block starts from random weights."""
+    if model_arch(source) == model_arch(recognition_model):
+        recognition_model.set_weights(source.get_weights())
+        return
+    def body(model):
+        layers = [layer for layer in model.layers
+                  if isinstance(layer, (tf.keras.layers.Conv2D, tf.keras.layers.BatchNormalization))
+                  and not isinstance(layer, tf.keras.layers.Conv1D)]
+        dense = next(layer for layer in model.layers if isinstance(layer, tf.keras.layers.Dense))
+        return layers[:8] + [dense]
+    for target, origin in zip(body(recognition_model), body(source)):
+        target.set_weights(origin.get_weights())
+    print("Warm start across architectures: conv body and first Dense copied, sequence block is new.")
 
 
 def split_indices(rows: list[dict[str, str]], groups: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -326,10 +396,14 @@ def main() -> None:
     warm_start = os.environ.get("OCR_WARM_START")
     if warm_start:
         # Continue training an existing recognizer instead of starting from random weights.
-        recognition_model.set_weights(tf.keras.models.load_model(warm_start).get_weights())
+        warm_start_weights(recognition_model, tf.keras.models.load_model(warm_start))
         print(f"Warm start from {warm_start}")
+    print(f"Architecture: {ARCH}, {recognition_model.count_params():,} parameters")
     max_minutes = os.environ.get("OCR_MAX_MINUTES")
     budget_callbacks = [TimeBudget(float(max_minutes))] if max_minutes else []
+    use_cosine = os.environ.get("OCR_COSINE") == "1" and max_minutes
+    if use_cosine:
+        budget_callbacks.append(TimeCosine(float(os.environ.get("OCR_LR", 1e-3)), float(max_minutes)))
     train_targets = np.zeros((len(train_idx), 1), dtype=np.float32)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     # Written every time val_loss improves, so a run stopped by hand or killed
@@ -346,7 +420,8 @@ def main() -> None:
         epochs=150,
         callbacks=[
             tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True),
-            tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=4, min_lr=1e-5),
+            *([] if use_cosine else
+              [tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=4, min_lr=1e-5)]),
             tf.keras.callbacks.ModelCheckpoint(str(checkpoint_path), monitor="val_loss",
                                                save_best_only=True, save_weights_only=True),
             *budget_callbacks,
